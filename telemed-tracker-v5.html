@@ -112,8 +112,13 @@ main{max-width:960px;margin:14px auto;padding:0 18px;display:grid;gap:12px}
 .meds li{padding:1px 0}
 .bag-actions{display:flex;gap:8px;margin-top:11px;flex-wrap:wrap}
 .calls{margin-top:9px;border-top:1px dashed var(--line);padding-top:8px;font-size:.82rem}
-.calls .call{display:flex;gap:8px;color:var(--muted);padding:2px 0}
+.calls .call{display:flex;gap:8px;color:var(--muted);padding:3px 0;align-items:baseline}
 .calls .call b{color:var(--ink);font-weight:600;white-space:nowrap}
+.calls .call .txt{flex:1}
+.calls .call-edit{font-size:.76rem;font-weight:600;color:var(--f1);padding:1px 7px;border-radius:6px;border:1px solid var(--line);background:#fff;white-space:nowrap}
+.calls .call-edit:hover{background:var(--f1-soft)}
+.calls .c-head{font-size:.76rem;font-weight:600;color:var(--muted);margin-bottom:2px}
+.age-due{font-size:.76rem;color:var(--muted);margin-top:3px}
 
 .overlay{position:fixed;inset:0;background:rgba(15,30,38,.5);display:none;align-items:flex-start;justify-content:center;padding:24px 14px;overflow:auto;z-index:50}
 .overlay.open{display:flex}
@@ -222,7 +227,7 @@ footer .io{display:flex;gap:8px;flex-wrap:wrap}
     <div class="field"><label>ชื่อผู้ป่วย (ไม่บังคับ)</label><input id="fName"></div>
     <div class="grid2">
       <div class="field"><label>วันที่รับถุงเข้า</label><input type="date" id="fDate"></div>
-      <div class="field"><label>วันที่ใบสั่งยา (Rx date)</label><input type="date" id="fRxDate"><div class="hint">ใช้ตอน improve / monitoring ต้องเลือกวันให้ตรง</div></div>
+      <div class="field"><label>วันที่ใบสั่งยา (Rx date) ⭐</label><input type="date" id="fRxDate"><div class="hint"><b>ตัวนับอายุถุงใช้วันนี้เป็นหลัก</b> — ครบ 1 เดือนจากวันนี้คือกำหนด improve ทิ้ง</div></div>
     </div>
     <div class="field"><label>เบอร์ติดต่อ</label><input id="fPhone" placeholder="08x-xxx-xxxx"></div>
     <div class="field"><label>💊 รายการยาในถุง (บรรทัดละ 1 รายการ)</label>
@@ -341,29 +346,34 @@ footer .io{display:flex;gap:8px;flex-wrap:wrap}
 <!-- ===== Call log (shared) ===== -->
 <div class="overlay" id="callOverlay">
   <div class="modal">
-    <h2>บันทึกการโทร confirm<button class="x" onclick="closeAll()">✕</button></h2>
-    <div class="field"><label>ผลการโทร</label>
-      <select id="cResult">
-        <option value="reach_keep">ติดต่อได้ — ยังต้องการยา / จะมาชำระ</option>
-        <option value="reach_cancel">ติดต่อได้ — ไม่เอายาแล้ว (CF ยกเลิก)</option>
-        <option value="noreach">ติดต่อไม่ได้</option>
-      </select>
+    <h2><span id="callTitle">บันทึกการโทร confirm</span><button class="x" onclick="closeAll()">✕</button></h2>
+    <div class="grid2">
+      <div class="field"><label>วันที่โทร</label><input type="date" id="cDate"></div>
+      <div class="field"><label>ผลการโทร</label>
+        <select id="cResult">
+          <option value="reach_keep">ติดต่อได้ — ยังต้องการยา / จะมาชำระ</option>
+          <option value="reach_cancel">ติดต่อได้ — ไม่เอายาแล้ว (CF ยกเลิก)</option>
+          <option value="noreach">ติดต่อไม่ได้</option>
+        </select>
+      </div>
     </div>
     <div class="field"><label>เหตุผล / รายละเอียด</label>
-      <select id="cReason">
-        <option value="">— เลือกหรือพิมพ์เพิ่มด้านล่าง —</option>
+      <input id="cReason" list="reasonList" placeholder="เลือกจากรายการ หรือพิมพ์เอง">
+      <datalist id="reasonList">
         <option>มียาเหลือ</option>
         <option>รับยาจาก รพ.อื่น</option>
         <option>ไม่สะดวกชำระ จะซื้อข้างนอกเอง</option>
         <option>ปฏิเสธรับยา / ขอเปลี่ยนสิทธิ</option>
         <option>ขอลดจำนวนยาที่เสียเงิน</option>
-      </select>
+        <option>ให้การเงินส่งลิงก์ชำระใหม่</option>
+      </datalist>
     </div>
-    <div class="field"><textarea id="cNote" rows="2" placeholder="รายละเอียดเพิ่มเติม (คุยกับผู้ป่วยเอง + Add Note ใน MS ด้วย)"></textarea></div>
+    <div class="field"><label>บันทึกการคุย</label><textarea id="cNote" rows="3" placeholder="รายละเอียดที่คุยกับผู้ป่วย (คุยเอง + Add Note ใน MS ด้วย)"></textarea></div>
     <div class="aware"><b>เตือนความจำ</b>ทุกเคสให้โทร confirm คุยกับผู้ป่วยด้วยตนเองก่อนแก้ไข และ Add Note ใน MS เป็นหลักฐาน</div>
     <div class="modal-actions">
+      <button class="btn btn-ghost danger-text" id="cDeleteBtn" style="display:none" onclick="deleteCall()">ลบบันทึกนี้</button>
       <button class="btn btn-ghost" onclick="closeAll()">ยกเลิก</button>
-      <button class="btn btn-primary" onclick="saveCall()">บันทึกการโทร</button>
+      <button class="btn btn-primary" onclick="saveCall()">บันทึก</button>
     </div>
   </div>
 </div>
@@ -558,7 +568,9 @@ const SESSION_LABEL={am:'รอบเช้า',pm:'รอบบ่าย'};
 const $=s=>document.querySelector(s);
 const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const todayISO=()=>new Date().toISOString().slice(0,10);
-function ageDays(b){return Math.floor((new Date(todayISO())-new Date(b.date))/86400000)}
+function ageAnchor(b){return b.rxDate||b.date||''}
+function ageDays(b){const a=ageAnchor(b);if(!a)return 0;return Math.floor((new Date(todayISO())-new Date(a))/86400000)}
+function dueDate(b){const a=ageAnchor(b);if(!a)return '';const d=new Date(a);d.setDate(d.getDate()+LIMIT_DAYS);return d.toISOString().slice(0,10)}
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),2800)}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
 function findAny(id){return bags.find(x=>x.id===id)||greens.find(x=>x.id===id)}
@@ -608,16 +620,21 @@ function statusInfo(b){
   return {label:'รอติดตาม',cls:''};
 }
 function callsHTML(b){
-  return (b.calls||[]).slice(-3).map(c=>{
+  const arr=b.calls||[];
+  if(!arr.length)return '';
+  return `<div class="c-head">📞 ประวัติการโทร (${arr.length} ครั้ง)</div>`+arr.map((c,i)=>{
     const r=c.result==='noreach'?'📵 ติดต่อไม่ได้':c.result==='reach_cancel'?'❌ CF ยกเลิก':'✅ ยืนยันรับยา';
-    return `<div class="call"><b>${c.date}</b><span>${r}${c.reason?' · '+esc(c.reason):''}${c.note?' — '+esc(c.note):''}</span></div>`;
+    return `<div class="call"><b>${c.date||'—'}</b><span class="txt">${r}${c.reason?' · '+esc(c.reason):''}${c.note?' — '+esc(c.note):''}</span>`+
+      `<button class="call-edit" onclick="openCall('${b.id}',${i})">แก้ไข</button></div>`;
   }).join('');
 }
 function bagCard(b){
   const d=ageDays(b);const pct=Math.min(100,d/LIMIT_DAYS*100);
   const fillCls=d>=25?'danger':d>=15?'warn':'';
   const st=statusInfo(b);
-  const ageLabel=d>=LIMIT_DAYS?`<b class="danger-text">ครบ ${d} วัน — เกินกำหนด!</b>`:`<b>${d} วัน</b> / ${LIMIT_DAYS}`;
+  const ageLabel=d>=LIMIT_DAYS?`<b class="danger-text">ครบ ${d} วัน — เกินกำหนด improve!</b>`:`<b>${d} วัน</b> / ${LIMIT_DAYS}`;
+  const anchorLabel=b.rxDate?`นับจากใบสั่งยา ${b.rxDate}`:`นับจากวันรับเข้า ${b.date||''}`;
+  const due=dueDate(b);
   const calls=callsHTML(b);
   const actions=b.status==='closed'
     ?`<button class="btn btn-ghost btn-sm" onclick="reopen('${b.id}')">เปิดเคสใหม่</button>
@@ -637,10 +654,12 @@ function bagCard(b){
         <span class="chip ${b.type}">${TYPE_LABEL[b.type]} · ${TYPE_FEE[b.type]}.-</span>
         <span class="chip ${st.cls}">${st.label}</span>
         ${b.paidShip?'<span class="chip flag">⚠ ชำระค่าส่ง แต่ไม่ชำระค่ายา</span>':''}
+        ${!b.rxDate&&b.status!=='closed'?'<span class="chip danger">⚠ ยังไม่ได้กรอกวันที่ใบสั่งยา</span>':''}
         ${b.fromGreen?'<span class="chip green">🏷 มาจากเคสตีกลับ</span>':''}
       </div>
-      ${b.status!=='closed'?`<div class="age"><div class="age-row"><span>อายุถุง</span><span>${ageLabel}</span></div>
-        <div class="age-track"><div class="age-fill ${fillCls}" style="width:${pct}%"></div><div class="age-mark"></div></div></div>`:''}
+      ${b.status!=='closed'?`<div class="age"><div class="age-row"><span>${anchorLabel}</span><span>${ageLabel}</span></div>
+        <div class="age-track"><div class="age-fill ${fillCls}" style="width:${pct}%"></div><div class="age-mark"></div></div>
+        ${due?`<div class="age-due">ครบกำหนด improve ทิ้ง: <b>${due}</b></div>`:''}</div>`:''}
       ${medsHTML(b)}
       ${b.notes?`<div class="bag-notes">📝 ${esc(b.notes)}</div>`:''}
       ${calls?`<div class="calls">${calls}</div>`:''}
@@ -811,6 +830,7 @@ function saveForm(){
   if(editId){const b=bags.find(x=>x.id===editId);Object.assign(b,data);touch(b);toast('แก้ไขแล้ว')}
   else{const b={id:uid(),status:'waiting',calls:[],disDone:[],...data};touch(b);bags.push(b);toast('รับถุงเข้าแล้ว')}
   persist();closeAll();render();
+  if(!data.rxDate)setTimeout(()=>toast('⚠️ ยังไม่ได้กรอกวันที่ใบสั่งยา — ตัวนับอายุจะใช้วันรับเข้าแทนไปก่อน'),1200);
 }
 
 /* ================= green add/edit ================= */
@@ -925,13 +945,34 @@ function removeCase(id){
 }
 
 /* ================= call log (shared) ================= */
-let callId=null;
-function openCall(id){callId=id;$('#cResult').value='reach_keep';$('#cReason').value='';$('#cNote').value='';$('#callOverlay').classList.add('open')}
+let callId=null,callIdx=null;
+function openCall(id,idx){
+  callId=id;callIdx=(idx===undefined||idx===null)?null:idx;
+  const o=findAny(id);
+  const c=(callIdx!==null&&o&&o.calls)?o.calls[callIdx]:null;
+  $('#callTitle').textContent=c?'แก้ไขบันทึกการโทร':'บันทึกการโทร confirm';
+  $('#cDate').value=c?(c.date||todayISO()):todayISO();
+  $('#cResult').value=c?c.result:'reach_keep';
+  $('#cReason').value=c?(c.reason||''):'';
+  $('#cNote').value=c?(c.note||''):'';
+  $('#cDeleteBtn').style.display=c?'':'none';
+  $('#callOverlay').classList.add('open');
+}
 function saveCall(){
-  const b=findAny(callId);if(!b)return;
-  b.calls=b.calls||[];
-  b.calls.push({date:todayISO(),result:$('#cResult').value,reason:$('#cReason').value,note:$('#cNote').value.trim()});
-  touch(b);persist();closeAll();render();toast('บันทึกการโทรแล้ว — อย่าลืม Add Note ใน MS');
+  const o=findAny(callId);if(!o)return;
+  o.calls=o.calls||[];
+  const rec={date:$('#cDate').value||todayISO(),result:$('#cResult').value,
+    reason:$('#cReason').value.trim(),note:$('#cNote').value.trim()};
+  if(callIdx!==null){o.calls[callIdx]=rec;toast('แก้ไขบันทึกการโทรแล้ว')}
+  else{o.calls.push(rec);toast('บันทึกการโทรแล้ว — อย่าลืม Add Note ใน MS')}
+  o.calls.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  touch(o);persist();closeAll();render();
+}
+function deleteCall(){
+  const o=findAny(callId);if(!o||callIdx===null)return;
+  if(!confirm('ลบบันทึกการโทรครั้งนี้?'))return;
+  o.calls.splice(callIdx,1);
+  touch(o);persist();closeAll();render();toast('ลบบันทึกการโทรแล้ว');
 }
 
 /* ================= dissolve ================= */
@@ -977,7 +1018,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeAll()});
 
 /* ================= import / export ================= */
 function download(name,text,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click()}
-function exportJSON(){download(`telemed-tracker-${todayISO()}.json`,JSON.stringify({bags,greens},null,2),'application/json');toast('สำรองข้อมูลแล้ว')}
+function exportJSON(){download(`telemed-tracker-${todayISO()}.json`,JSON.stringify({bags,greens,cases},null,2),'application/json');toast('สำรองข้อมูลแล้ว')}
 function importJSON(ev){
   const f=ev.target.files[0];if(!f)return;
   const r=new FileReader();
@@ -996,9 +1037,9 @@ function importJSON(ev){
 function exportCSV(){
   let head,rows,name;
   if(activeTab==='bags'){
-    head=['คิว','HN','ชื่อ','วันที่รับเข้า','วันที่ใบสั่งยา','อายุ(วัน)','ประเภท','ค่าปรับ','รายการยา','สถานะ','โทรล่าสุด','หมายเหตุ'];
+    head=['คิว','HN','ชื่อ','วันที่รับเข้า','วันที่ใบสั่งยา','อายุ(วัน) นับจากใบสั่งยา','ครบกำหนด improve','ประเภท','ค่าปรับ','รายการยา','สถานะ','จำนวนครั้งที่โทร','โทรล่าสุด','หมายเหตุ'];
     rows=liveB().map(b=>{const st=statusInfo(b);const lc=(b.calls||[]).slice(-1)[0];
-      return [b.queue,b.hn,b.name||'',b.date,b.rxDate||'',ageDays(b),TYPE_LABEL[b.type],TYPE_FEE[b.type],(b.meds||'').replace(/\n/g,' | '),st.label,lc?lc.date:'',(b.notes||'').replace(/\n/g,' ')]});
+      return [b.queue,b.hn,b.name||'',b.date,b.rxDate||'',ageDays(b),dueDate(b),TYPE_LABEL[b.type],TYPE_FEE[b.type],(b.meds||'').replace(/\n/g,' | '),st.label,(b.calls||[]).length,lc?lc.date:'',(b.notes||'').replace(/\n/g,' ')]});
     name=`telemed-bags-${todayISO()}.csv`;
   }else if(activeTab==='greens'){
     head=['คิว','HN','ชื่อ','วันที่ตีกลับ','วันที่ใบสั่งยา','รอบ','เหตุผล','รายการยา','ความคืบหน้า','สถานะ','โทรล่าสุด','หมายเหตุ'];
