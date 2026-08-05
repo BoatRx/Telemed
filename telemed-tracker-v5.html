@@ -457,7 +457,7 @@ function setSyncStatus(s,label){
   const pill=document.getElementById('syncPill');
   pill.dataset.s=s;
   document.getElementById('syncLabel').textContent=label||
-    (s==='ok'?'Sheets ✓ '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})
+    (s==='ok'?'Sheets ✓ '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+(lastSyncMs?` · ${(lastSyncMs/1000).toFixed(1)}s`:'')
     :s==='syncing'?'กำลัง sync…'
     :s==='pending'?'⏳ ยังไม่ขึ้นชีต — กำลังส่ง'
     :s==='fail'?'⚠️ ยังไม่ขึ้นชีต — แตะเพื่อตรวจ'
@@ -482,44 +482,53 @@ function flushBeacon(){
   }catch(e){}
   return false;
 }
-let warnedOldScript=false;
+let warnedOldScript=false,serverOk=false,lastSyncMs=0;
+const pendingIds=new Set();
+let lastFullPush=0;
+
+function fetchTimeout(url,opts,ms){
+  const ac=new AbortController();
+  const t=setTimeout(()=>ac.abort(),ms);
+  return fetch(url,{...opts,signal:ac.signal}).finally(()=>clearTimeout(t));
+}
+function deltaOf(arr){return arr.filter(o=>pendingIds.has(o.id))}
+
 async function syncNow(){
   if(!syncUrl||syncing)return;
   syncing=true;setSyncStatus('syncing');
+  const t0=Date.now();
   try{
-    // ขั้นที่ 1: ดึงข้อมูลจากชีตมารวมกับเครื่องนี้ก่อนเสมอ (กันเครื่องเปล่าไปทับข้อมูลกลาง)
-    let scriptVersion='';
-    try{
-      const r=await fetch(syncUrl+'?action=load&pin='+encodeURIComponent(syncPin));
-      const jj=await r.json();
-      if(!jj.ok&&String(jj.error||'').indexOf('pin')!==-1){setSyncStatus('fail','PIN ไม่ถูกต้อง — แตะเพื่อตั้งค่า');syncing=false;return}
-      if(jj.ok&&jj.data){
-        scriptVersion=jj.version||'';
-        bags=mergeLists(jj.data.bags,bags);
-        greens=mergeLists(jj.data.greens,greens);
-        cases=mergeLists(jj.data.cases,cases);
-      }
-    }catch(e){/* ดึงไม่ได้ก็ยังส่งข้อมูลรวมฝั่งเราขึ้นไป */}
-    // ขั้นที่ 2: ส่ง "ข้อมูลรวมแล้ว" ขึ้นชีต — ต่อให้สคริปต์ฝั่งชีตเป็นแบบเขียนทับ ข้อมูลก็ไม่หาย
     const seqAtSend=dirtySeq;
-    const res=await fetch(syncUrl,{method:'POST',body:JSON.stringify({action:'save',pin:syncPin,data:{bags,greens,cases}})});
+    // ส่งเฉพาะเคสที่เปลี่ยน เว้นแต่ยังไม่เคย push เต็มในรอบนี้ (หรือครบ 10 นาที)
+    const needFull=!serverOk||!lastFullPush||(Date.now()-lastFullPush>600000);
+    const payload={action:'save',pin:syncPin,
+      data:needFull?{bags,greens,cases}
+                   :{bags:deltaOf(bags),greens:deltaOf(greens),cases:deltaOf(cases)}};
+    const sentIds=needFull?null:new Set(pendingIds);
+    const res=await fetchTimeout(syncUrl,{method:'POST',body:JSON.stringify(payload)},30000);
     const j=await res.json();
     if(!j.ok){
+      if(String(j.error||'')==='busy'){setSyncStatus('pending');scheduleSync();syncing=false;return}
       if(String(j.error||'').indexOf('pin')!==-1){setSyncStatus('fail','PIN ไม่ถูกต้อง — แตะเพื่อตั้งค่า');syncing=false;return}
       throw new Error(j.error||'save failed');
     }
-    if(j.data){
-      bags=j.data.bags||bags;greens=j.data.greens||greens;cases=j.data.cases||cases;
-    }
+    serverOk=true;
+    if(needFull)lastFullPush=Date.now();
+    if(j.data){bags=j.data.bags||bags;greens=j.data.greens||greens;cases=j.data.cases||cases}
+    if(sentIds)sentIds.forEach(id=>pendingIds.delete(id));else pendingIds.clear();
     try{localStorage.setItem(KEY,JSON.stringify({bags,greens,cases}))}catch(e){}
     render();
+    lastSyncMs=Date.now()-t0;
     if(dirtySeq===seqAtSend){dirty=false;setSyncStatus('ok')}
     else{setSyncStatus('pending');scheduleSync()}
-    if((j.version||scriptVersion)!=='5'&&!warnedOldScript){
+    if(lastSyncMs>15000)toast(`⏱ Sync ใช้เวลา ${(lastSyncMs/1000).toFixed(0)} วิ (เซิร์ฟเวอร์ ${j.ms||'?'} ms) — ถ้าช้าบ่อย ตรวจว่า Apps Script เป็นเวอร์ชัน 6 แล้ว`);
+    if(Number(j.version||0)<6&&!warnedOldScript){
       warnedOldScript=true;
-      toast('⚠️ สคริปต์บนชีตยังเป็นเวอร์ชันเก่า — เข้า Apps Script: Deploy → Manage deployments → ✏️ → New version');
+      toast('⚠️ สคริปต์บนชีตยังเป็นเวอร์ชันเก่า (ทำให้ sync ช้า) — Deploy → Manage deployments → ✏️ → New version');
     }
-  }catch(e){setSyncStatus('fail')}
+  }catch(e){
+    setSyncStatus('fail',String(e&&e.name)==='AbortError'?'หมดเวลารอ — แตะเพื่อลองใหม่':undefined);
+  }
   syncing=false;
 }
 function openSettings(){
@@ -539,10 +548,15 @@ async function testSync(){
   const u=document.getElementById('sUrl').value.trim();
   if(!u){toast('วาง Web App URL ก่อน');return}
   toast('กำลังทดสอบ…');
+  const t0=Date.now();
   try{
-    const res=await fetch(u+'?action=ping');
+    const res=await fetchTimeout(u+'?action=ping',{},20000);
     const j=await res.json();
-    if(j.ok){toast('✅ เชื่อมต่อสำเร็จ — กดบันทึกได้เลย')}else throw 0;
+    if(!j.ok)throw 0;
+    const ms=Date.now()-t0;
+    const v=Number(j.version||0);
+    toast(v<6?`✅ เชื่อมต่อได้ (${ms} ms) แต่สคริปต์เป็นเวอร์ชัน ${j.version||'เก่า'} — อัปเป็น v6 จะเร็วขึ้นมาก`
+             :`✅ เชื่อมต่อสำเร็จ (${ms} ms) · สคริปต์ v${j.version}`);
   }catch(e){toast('❌ เชื่อมต่อไม่ได้ — ตรวจว่า Deploy แบบ "Anyone" และคัดลอก URL /exec')}
 }
 async function restoreFromSheet(){
@@ -555,6 +569,7 @@ async function restoreFromSheet(){
     const j=await res.json();
     if(!j.ok)throw 0;
     bags=j.data.bags||[];greens=j.data.greens||[];cases=j.data.cases||[];
+    pendingIds.clear();dirty=false;lastFullPush=Date.now();
     try{localStorage.setItem(KEY,JSON.stringify({bags,greens,cases}))}catch(e){}
     closeAll();render();toast(`กู้คืนแล้ว: ${bags.length} ถุง + ${greens.length} ตีกลับ + ${cases.length} เคสส่งเวร`);
   }catch(e){toast('❌ ดึงข้อมูลไม่สำเร็จ')}
@@ -591,7 +606,7 @@ function dueDate(b){const a=ageAnchor(b);if(!a)return '';const d=new Date(a);d.s
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),2800)}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
 function findAny(id){return bags.find(x=>x.id===id)||greens.find(x=>x.id===id)}
-function touch(o){o.updatedAt=Date.now()}
+function touch(o){o.updatedAt=Date.now();if(o.id)pendingIds.add(o.id)}
 function mergeLists(server,client){
   const map={};
   (server||[]).forEach(o=>{if(o&&o.id)map[o.id]=o});
@@ -1047,6 +1062,8 @@ function importJSON(ev){
     [...nb,...ng,...nc].forEach(o=>{if(!o.id)o.id=uid()});
     if(!confirm(`นำเข้า ${nb.length} ถุง + ${ng.length} ตีกลับ + ${nc.length} เคสส่งเวร — จะรวมเข้ากับข้อมูลปัจจุบัน (ไม่ทับ) ยืนยัน?`))return;
     bags=mergeLists(bags,nb);greens=mergeLists(greens,ng);cases=mergeLists(cases,nc);
+    [...nb,...ng,...nc].forEach(o=>pendingIds.add(o.id));
+    lastFullPush=0;
     persist();render();toast('นำเข้าและรวมข้อมูลแล้ว')
   }catch(e){toast('ไฟล์ไม่ถูกต้อง')}};
   r.readAsText(f);ev.target.value='';
