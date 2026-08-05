@@ -208,6 +208,7 @@ footer .io{display:flex;gap:8px;flex-wrap:wrap}
 <footer>
   <span>ข้อมูลเก็บในเครื่อง + สำรองขึ้น Google Sheets อัตโนมัติเมื่อเชื่อมต่อ</span>
   <div class="io">
+    <button class="btn btn-ghost btn-sm" onclick="syncNow()">⟳ Sync เดี๋ยวนี้</button>
     <button class="btn btn-ghost btn-sm" onclick="openSettings()">⚙️ ตั้งค่า Sheets</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">สำรอง JSON</button>
     <button class="btn btn-ghost btn-sm" onclick="document.getElementById('importFile').click()">นำเข้า</button>
@@ -442,6 +443,7 @@ function persist(){
   const data={bags,greens,cases};
   try{localStorage.setItem(KEY,JSON.stringify(data))}
   catch(e){memStore=data;toast('⚠️ บันทึกลงเครื่องไม่ได้ — อย่าลืมสำรอง JSON ก่อนปิดหน้า')}
+  markDirty();
   scheduleSync();
 }
 let {bags,greens,cases}=loadData();
@@ -457,15 +459,28 @@ function setSyncStatus(s,label){
   document.getElementById('syncLabel').textContent=label||
     (s==='ok'?'Sheets ✓ '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})
     :s==='syncing'?'กำลัง sync…'
-    :s==='pending'?'รอ sync…'
-    :s==='fail'?'Sync ล้มเหลว — แตะเพื่อตรวจ'
+    :s==='pending'?'⏳ ยังไม่ขึ้นชีต — กำลังส่ง'
+    :s==='fail'?'⚠️ ยังไม่ขึ้นชีต — แตะเพื่อตรวจ'
     :'ยังไม่เชื่อม Sheets');
 }
+let dirty=false,dirtySeq=0;
+function markDirty(){dirty=true;dirtySeq++}
 function scheduleSync(){
   if(!syncUrl)return;
   setSyncStatus('pending');
   clearTimeout(syncTimer);
-  syncTimer=setTimeout(syncNow,3000);
+  syncTimer=setTimeout(syncNow,1500);
+}
+/* ส่งข้อมูลแบบ fire-and-forget ตอนกำลังปิดหน้า (เบราว์เซอร์ยอมให้ส่งต่อแม้หน้าปิดแล้ว) */
+function flushBeacon(){
+  if(!syncUrl||!dirty)return false;
+  try{
+    const payload=JSON.stringify({action:'save',pin:syncPin,data:{bags,greens,cases}});
+    if(navigator.sendBeacon){
+      return navigator.sendBeacon(syncUrl,new Blob([payload],{type:'text/plain;charset=UTF-8'}));
+    }
+  }catch(e){}
+  return false;
 }
 let warnedOldScript=false;
 async function syncNow(){
@@ -486,6 +501,7 @@ async function syncNow(){
       }
     }catch(e){/* ดึงไม่ได้ก็ยังส่งข้อมูลรวมฝั่งเราขึ้นไป */}
     // ขั้นที่ 2: ส่ง "ข้อมูลรวมแล้ว" ขึ้นชีต — ต่อให้สคริปต์ฝั่งชีตเป็นแบบเขียนทับ ข้อมูลก็ไม่หาย
+    const seqAtSend=dirtySeq;
     const res=await fetch(syncUrl,{method:'POST',body:JSON.stringify({action:'save',pin:syncPin,data:{bags,greens,cases}})});
     const j=await res.json();
     if(!j.ok){
@@ -497,7 +513,8 @@ async function syncNow(){
     }
     try{localStorage.setItem(KEY,JSON.stringify({bags,greens,cases}))}catch(e){}
     render();
-    setSyncStatus('ok');
+    if(dirtySeq===seqAtSend){dirty=false;setSyncStatus('ok')}
+    else{setSyncStatus('pending');scheduleSync()}
     if((j.version||scriptVersion)!=='5'&&!warnedOldScript){
       warnedOldScript=true;
       toast('⚠️ สคริปต์บนชีตยังเป็นเวอร์ชันเก่า — เข้า Apps Script: Deploy → Manage deployments → ✏️ → New version');
@@ -1061,8 +1078,24 @@ $('#filterGreen').addEventListener('change',render);
 $('#filterCase').addEventListener('change',render);
 render();
 if(syncUrl){setSyncStatus('syncing');syncNow()}
-// ดึงข้อมูลล่าสุดเมื่อกลับมาที่แท็บ (เผื่อคนอื่นแก้ระหว่างนั้น)
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&syncUrl)syncNow()});
+
+/* ===== กันปิดแอปก่อนข้อมูลขึ้นชีต ===== */
+// 1) เตือนก่อนปิด/รีเฟรช ถ้ายังมีข้อมูลค้าง
+window.addEventListener('beforeunload',e=>{
+  if(dirty&&syncUrl){
+    flushBeacon();
+    e.preventDefault();
+    e.returnValue='ข้อมูลยังไม่ถูกส่งขึ้น Google Sheets';
+    return e.returnValue;
+  }
+});
+// 2) สลับแอป/ย่อหน้าจอ (มือถือมักไม่เรียก beforeunload) → ส่งทันที
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){
+    if(dirty&&syncUrl){clearTimeout(syncTimer);if(!flushBeacon())syncNow()}
+  }else if(syncUrl){syncNow()}
+});
+window.addEventListener('pagehide',()=>{if(dirty&&syncUrl)flushBeacon()});
 </script>
 </body>
 </html>
