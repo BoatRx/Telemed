@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Telemed Tracker — ถุงค้างชำระ & การเงินตีกลับ</title>
-<meta name="app-version" content="v9.0 · 2026-09-16">
+<meta name="app-version" content="v10.0 · 2026-09-16">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@500;600;700&family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -169,7 +169,7 @@ footer .io{display:flex;gap:8px;flex-wrap:wrap}
       <button class="sync-pill" id="syncPill" data-s="off" onclick="openSettings()"><span class="dot"></span><span id="syncLabel">ยังไม่เชื่อม Sheets</span></button>
     </h1>
     <div class="sub">ถุงค้างชำระ (เก็บไม่เกิน 1 เดือน) · เคสการเงินตีกลับ tag เขียว · ใช้ร่วมกันได้หลายเครื่องผ่าน Google Sheets</div>
-    <div class="version-badge" id="appVersionBadge">WebApp v9.0 · อัปเดต 16 ก.ย. 2026</div>
+    <div class="version-badge" id="appVersionBadge">WebApp v10.0 · อัปเดต 16 ก.ย. 2026</div>
     <div class="stats" id="stats"></div>
   </div>
 </header>
@@ -467,136 +467,172 @@ function persistDeferred(delay=180){
 }
 let {bags,greens,cases}=loadData();
 
-/* ================= Google Sheets sync ================= */
-let syncUrl=DEFAULT_SYNC_URL,syncPin='';
+/* ================= Google Sheets sync v10 ================= */
+let syncUrl=DEFAULT_SYNC_URL;
+let syncPin='';
 try{syncUrl=localStorage.getItem(SYNC_KEY)||DEFAULT_SYNC_URL}catch(e){}
 try{syncPin=localStorage.getItem(PIN_KEY)||''}catch(e){}
-let syncTimer=null,syncing=false,pulling=false;
-const SYNC_TIMEOUT_MS=30000;
-const RETRY_BASE_MS=3000;
-const MAX_RETRY_MS=30000;
+
+const CURSOR_KEY='telemed_sync_cursor_v10';
+let serverCursor=0;
+try{serverCursor=Number(localStorage.getItem(CURSOR_KEY)||0)}catch(e){serverCursor=0}
+
+let syncTimer=null,retryTimer=null;
+let syncing=false,pulling=false;
 let syncRetryCount=0,lastSyncMs=0,serverOk=false;
-let retryTimer=null;
 const pendingIds=new Set();
-let lastPullAt=0;
+let dirty=false,dirtySeq=0;
 
 function setSyncStatus(s,label){
   const pill=document.getElementById('syncPill');
+  if(!pill)return;
   pill.dataset.s=s;
-  document.getElementById('syncLabel').textContent=label||
-    (s==='ok'?'Sheets ✓ '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+(lastSyncMs?` · ${(lastSyncMs/1000).toFixed(1)}s`:'')
+  const el=document.getElementById('syncLabel');
+  el.textContent=label||(s==='ok'
+    ?'Sheets ✓ '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+(lastSyncMs?` · ${(lastSyncMs/1000).toFixed(1)}s`:'')
     :s==='syncing'?'กำลัง sync…'
-    :s==='pending'?'⏳ ยังไม่ขึ้นชีต — กำลังส่ง'
-    :s==='fail'?'⚠️ ยังไม่ขึ้นชีต — แตะเพื่อตรวจ'
+    :s==='pending'?'⏳ รอส่งข้อมูลขึ้น Sheets'
+    :s==='fail'?'⚠️ Sync มีปัญหา — แตะเพื่อตรวจ'
     :'ยังไม่เชื่อม Sheets');
 }
-let dirty=false,dirtySeq=0;
+
 function markDirty(){dirty=true;dirtySeq++}
-function scheduleSync(delay=500){
+function scheduleSync(delay=350){
   if(!syncUrl)return;
   setSyncStatus('pending');
   clearTimeout(syncTimer);
-  clearTimeout(retryTimer);
   syncTimer=setTimeout(()=>{syncTimer=null;syncNow('scheduled')},delay);
 }
 function fetchTimeout(url,opts,ms){
   const ac=new AbortController();
-  const t=setTimeout(()=>ac.abort(),ms);
-  return fetch(url,{...opts,signal:ac.signal}).finally(()=>clearTimeout(t));
+  const timer=setTimeout(()=>ac.abort(),ms);
+  return fetch(url,{...opts,signal:ac.signal}).finally(()=>clearTimeout(timer));
 }
 function deltaOf(arr){return arr.filter(o=>o&&o.id&&pendingIds.has(o.id))}
-function addPending(arr){(arr||[]).forEach(o=>{if(o&&o.id)pendingIds.add(o.id)})}
-function allLists(){return {bags,greens,cases}}
+function findLocalById(id){return bags.find(x=>x.id===id)||greens.find(x=>x.id===id)||cases.find(x=>x.id===id)}
+
 function mergeServerIntoLocal(server){
-  const local=allLists();
-  function mergeOne(l,s){
-    const map=new Map((l||[]).filter(x=>x&&x.id).map(x=>[x.id,x]));
-    (s||[]).forEach(x=>{
+  let changed=false;
+  function mergeOne(local,remote){
+    const map=new Map((local||[]).filter(x=>x&&x.id).map(x=>[x.id,x]));
+    (remote||[]).forEach(x=>{
       if(!x||!x.id)return;
       const cur=map.get(x.id);
-      if(!cur || (Number(x.updatedAt)||0)>(Number(cur.updatedAt)||0)) map.set(x.id,x);
-      else if(cur && (Number(cur.updatedAt)||0)>(Number(x.updatedAt)||0)) pendingIds.add(x.id);
+      const serverTs=Number(x.updatedAt)||0;
+      const localTs=Number(cur&&cur.updatedAt)||0;
+      if(!cur||serverTs>localTs){map.set(x.id,x);changed=true}
+      else if(cur&&localTs>serverTs){pendingIds.add(x.id)}
     });
     return Array.from(map.values());
   }
-  bags=mergeOne(local.bags,server.bags);
-  greens=mergeOne(local.greens,server.greens);
-  cases=mergeOne(local.cases,server.cases);
-  try{saveLocalNow()}catch(e){}
-  render();
+  bags=mergeOne(bags,server.bags);
+  greens=mergeOne(greens,server.greens);
+  cases=mergeOne(cases,server.cases);
+  if(changed){saveLocalNow();render()}
+}
+
+function saveCursor(cursor){
+  const n=Number(cursor||0);
+  if(!n)return;
+  serverCursor=Math.max(serverCursor,n);
+  try{localStorage.setItem(CURSOR_KEY,String(serverCursor))}catch(e){}
 }
 
 async function pullNow(reason='background'){
-  if(!syncUrl || pulling || syncing || (dirty && pendingIds.size)) return false;
+  if(!syncUrl||pulling||syncing)return false;
+  if(dirty&&pendingIds.size)return false;
   pulling=true;
-  // ไม่เปลี่ยนสถานะ UI เป็น error ระหว่าง background pull
   try{
     const t0=Date.now();
-    const res=await fetchTimeout(syncUrl+'?action=load&pin='+encodeURIComponent(syncPin),{cache:'no-store'},12000);
-    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    let url;
+    if(serverCursor){
+      url=syncUrl+'?action=delta&since='+encodeURIComponent(serverCursor)+'&pin='+encodeURIComponent(syncPin);
+    }else{
+      url=syncUrl+'?action=load&pin='+encodeURIComponent(syncPin);
+    }
+    const res=await fetchTimeout(url,{cache:'no-store'},15000);
+    if(!res.ok)throw new Error(`HTTP ${res.status}`);
     const j=await res.json();
-    if(!j.ok) throw new Error(j.error||'load failed');
+    if(!j.ok)throw new Error(j.error||'load failed');
     mergeServerIntoLocal(j.data||{bags:[],greens:[],cases:[]});
+    saveCursor(j.cursor||serverCursor);
     serverOk=true;
-    lastPullAt=Date.now();
     lastSyncMs=Date.now()-t0;
-    if(reason==='manual') setSyncStatus('ok');
-    else if(!dirty) setSyncStatus('ok');
+    if(reason==='manual'||(!dirty&&pendingIds.size===0))setSyncStatus('ok');
     return true;
   }catch(e){
-    // Background pull ล้มเหลวไม่ควรทำให้ UI กระพริบหรือบอกว่า local ใช้ไม่ได้
-    if(reason==='manual') setSyncStatus('pending','⚠️ ดึงข้อมูลจาก Sheets ไม่สำเร็จ — ข้อมูลในเครื่องยังใช้งานได้');
+    if(reason==='manual')setSyncStatus('pending','⚠️ ดึงข้อมูลจาก Sheets ไม่สำเร็จ — ข้อมูลในเครื่องยังใช้งานได้');
     return false;
   }finally{pulling=false}
 }
 
+function makeSendSnapshot(){
+  const data={bags:deltaOf(bags),greens:deltaOf(greens),cases:deltaOf(cases)};
+  const versions=new Map();
+  [...data.bags,...data.greens,...data.cases].forEach(o=>{
+    if(o&&o.id)versions.set(o.id,Number(o.updatedAt)||0);
+  });
+  return {data,versions};
+}
+
 async function syncNow(reason='manual'){
-  if(!syncUrl || syncing || pulling)return false;
-  const payloadData={bags:deltaOf(bags),greens:deltaOf(greens),cases:deltaOf(cases)};
-  const total=payloadData.bags.length+payloadData.greens.length+payloadData.cases.length;
-  if(total===0){
-    if(reason==='manual') return await pullNow('manual');
-    return true;
-  }
+  if(!syncUrl||syncing||pulling)return false;
+  const snap=makeSendSnapshot();
+  const total=snap.data.bags.length+snap.data.greens.length+snap.data.cases.length;
+  if(total===0)return reason==='manual'?await pullNow('manual'):true;
 
   syncing=true;
-  clearTimeout(syncTimer); clearTimeout(retryTimer);
-  setSyncStatus('syncing',reason==='background'?'กำลัง sync เบื้องหลัง…':'กำลังบันทึกขึ้น Sheets…');
-  const t0=Date.now();
+  clearTimeout(syncTimer);
+  clearTimeout(retryTimer);
+  setSyncStatus('syncing','กำลังบันทึกขึ้น Sheets…');
+
   const seqAtSend=dirtySeq;
-  const sentIds=new Set(pendingIds);
+  const t0=Date.now();
+
   try{
-    const res=await fetchTimeout(syncUrl,{method:'POST',headers:{'Content-Type':'text/plain;charset=UTF-8'},body:JSON.stringify({action:'saveDelta',pin:syncPin,data:payloadData}),cache:'no-store'},20000);
+    const res=await fetchTimeout(syncUrl,{
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=UTF-8'},
+      body:JSON.stringify({action:'saveDelta',pin:syncPin,data:snap.data}),
+      cache:'no-store'
+    },20000);
     if(!res.ok)throw new Error(`HTTP ${res.status}`);
     const j=await res.json();
-    if(!j.ok){
-      if(String(j.error||'')==='busy')throw new Error('busy');
-      throw new Error(j.error||'save failed');
-    }
-    serverOk=true; syncRetryCount=0;
-    sentIds.forEach(id=>pendingIds.delete(id));
+    if(!j.ok){if(String(j.error||'')==='busy')throw new Error('busy');throw new Error(j.error||'save failed')}
+
+    serverOk=true;
+    syncRetryCount=0;
+
+    snap.versions.forEach((sentVersion,id)=>{
+      const cur=findLocalById(id);
+      const currentVersion=Number(cur&&cur.updatedAt)||0;
+      if(cur&&currentVersion===sentVersion)pendingIds.delete(id);
+    });
+
+    saveCursor(j.cursor||serverCursor);
     lastSyncMs=Date.now()-t0;
     saveLocalNow();
-    if(dirtySeq===seqAtSend){
+
+    if(dirtySeq!==seqAtSend||pendingIds.size){
+      dirty=true;
+      setSyncStatus('pending','⏳ มีข้อมูลแก้ไขใหม่ — กำลังส่งต่อ');
+      scheduleSync(150);
+    }else{
       dirty=false;
       setSyncStatus('ok');
-    }else{
-      setSyncStatus('pending','⏳ มีการแก้ไขใหม่ — กำลังส่งต่อ');
-      scheduleSync(300);
     }
-    if(lastSyncMs>5000)toast(`⏱ Sync ${(lastSyncMs/1000).toFixed(1)} วิ · Server ${j.ms||'?'} ms`);
     return true;
   }catch(e){
     syncRetryCount++;
     const msg=String(e&&e.message||e||'unknown');
     let label;
-    if(e&&e.name==='AbortError') label=`⏳ Sheets ตอบช้า — จะลองใหม่ (${syncRetryCount})`;
-    else if(msg==='busy') label=`⏳ Sheets กำลังใช้งาน — จะลองใหม่ (${syncRetryCount})`;
-    else if(msg.includes('Failed to fetch')) label=`📡 ติดต่อ Sheets ไม่ได้ — จะลองใหม่ (${syncRetryCount})`;
+    if(e&&e.name==='AbortError')label=`⏳ Sheets ตอบช้า — จะลองใหม่ (${syncRetryCount})`;
+    else if(msg==='busy')label=`⏳ Sheets กำลังใช้งาน — จะลองใหม่ (${syncRetryCount})`;
+    else if(msg.includes('Failed to fetch'))label=`📡 ติดต่อ Sheets ไม่ได้ — จะลองใหม่ (${syncRetryCount})`;
     else label=`⚠️ บันทึก Sheets ไม่สำเร็จ — จะลองใหม่ (${syncRetryCount})`;
     setSyncStatus('pending',label);
-    if(dirty && syncUrl && pendingIds.size){
-      const delay=Math.min(MAX_RETRY_MS,RETRY_BASE_MS*Math.pow(2,Math.min(syncRetryCount-1,3)));
+    if(pendingIds.size&&syncUrl){
+      const delay=Math.min(20000,2000*Math.pow(2,Math.min(syncRetryCount-1,3)));
       clearTimeout(retryTimer);
       retryTimer=setTimeout(()=>{retryTimer=null;syncNow('retry')},delay);
     }
@@ -606,79 +642,87 @@ async function syncNow(reason='manual'){
 
 async function bootstrapSync(){
   if(!syncUrl)return;
-  // v9: local-first — ห้ามรอ Sheets ตอนเปิดแอป
   serverOk=false;
-  setSyncStatus('ok','ใช้ข้อมูลในเครื่อง · รอ sync เบื้องหลัง');
-  if(dirty && pendingIds.size){
-    scheduleSync(500);
-    return;
-  }
-  // ping สั้น ๆ แทนการดึงฐานข้อมูลทั้งก้อนตอนเปิดแอป
-  try{
-    const res=await fetchTimeout(syncUrl+'?action=ping',{},5000);
-    const j=await res.json();
-    if(!j.ok)throw new Error('ping failed');
-    serverOk=true;
-    setSyncStatus('ok','Sheets ✓ พร้อม sync');
-  }catch(e){
-    setSyncStatus('ok','ใช้ข้อมูลในเครื่อง · Sheets ไม่พร้อมชั่วคราว');
-  }
+  setSyncStatus('ok','ใช้ข้อมูลในเครื่อง · กำลังตรวจ Sheets');
+  if(dirty&&pendingIds.size){scheduleSync(300);return}
+  pullNow('background');
 }
 
 function flushBeacon(){
-  if(!syncUrl||!dirty||pendingIds.size===0)return false;
+  if(!syncUrl||!pendingIds.size)return false;
   try{
-    const payload=JSON.stringify({action:'saveDelta',pin:syncPin,data:{bags:deltaOf(bags),greens:deltaOf(greens),cases:deltaOf(cases)}});
+    const snap=makeSendSnapshot();
+    const payload=JSON.stringify({action:'saveDelta',pin:syncPin,data:snap.data});
     return navigator.sendBeacon?navigator.sendBeacon(syncUrl,new Blob([payload],{type:'text/plain;charset=UTF-8'})):false;
   }catch(e){return false}
 }
 
-// pull เป็นครั้งคราวเฉพาะเมื่อไม่มีการแก้ไขค้าง และไม่ทำให้ UI กระพริบ
 setInterval(()=>{
-  if(syncUrl && !dirty && pendingIds.size===0 && !syncing && !pulling) pullNow('interval');
-},180000);
+  if(syncUrl&&!dirty&&pendingIds.size===0&&!syncing&&!pulling)pullNow('interval');
+},15000);
 
 function openSettings(){
   document.getElementById('sUrl').value=syncUrl;
   document.getElementById('sPin').value=syncPin;
   document.getElementById('settingsOverlay').classList.add('open');
 }
+
 function saveSettings(){
-  syncUrl=document.getElementById('sUrl').value.trim()||DEFAULT_SYNC_URL;
+  const newUrl=document.getElementById('sUrl').value.trim()||DEFAULT_SYNC_URL;
   syncPin=document.getElementById('sPin').value.trim();
-  try{localStorage.setItem(SYNC_KEY,syncUrl);localStorage.setItem(PIN_KEY,syncPin)}catch(e){}
+  const urlChanged=newUrl!==syncUrl;
+  syncUrl=newUrl;
+  try{
+    localStorage.setItem(SYNC_KEY,syncUrl);
+    localStorage.setItem(PIN_KEY,syncPin);
+  }catch(e){}
   closeAll();
-  if(syncUrl){toast('บันทึกแล้ว — กำลัง sync ข้อมูลขึ้นชีต');syncNow()}
-  else{setSyncStatus('off');toast('ปิดการเชื่อมต่อ Sheets แล้ว')}
+  if(urlChanged){
+    serverCursor=0;
+    try{localStorage.removeItem(CURSOR_KEY)}catch(e){}
+  }
+  toast('บันทึกแล้ว — กำลัง sync');
+  syncNow('manual');
 }
+
 async function testSync(){
   const u=document.getElementById('sUrl').value.trim();
+  const pin=document.getElementById('sPin').value.trim();
   if(!u){toast('วาง Web App URL ก่อน');return}
   toast('กำลังทดสอบ…');
   const t0=Date.now();
   try{
-    const res=await fetchTimeout(u+'?action=ping',{},20000);
+    const res=await fetchTimeout(u+'?action=ping',{cache:'no-store'},10000);
     const j=await res.json();
-    if(!j.ok)throw 0;
-    const ms=Date.now()-t0;
-    const v=Number(j.version||0);
-    toast(v<9?`✅ เชื่อมต่อได้ (${ms} ms) แต่สคริปต์เป็น v${j.version||'เก่า'} — ควรใช้ Apps Script v9`
-             :`✅ เชื่อมต่อสำเร็จ (${ms} ms) · สคริปต์ v${j.version}`);
-  }catch(e){toast('❌ เชื่อมต่อไม่ได้ — ตรวจว่า Deploy แบบ "Anyone" และคัดลอก URL /exec')}
+    if(!j.ok)throw new Error(j.error||'ping failed');
+    const authRes=await fetchTimeout(u+'?action=delta&since=0&pin='+encodeURIComponent(pin),{cache:'no-store'},15000);
+    const auth=await authRes.json();
+    if(!auth.ok)throw new Error(auth.error||'auth failed');
+    toast(`✅ เชื่อมต่อสำเร็จ ${Date.now()-t0} ms · Apps Script v${j.version}`);
+  }catch(e){toast('❌ เชื่อมต่อไม่ได้ — ตรวจ URL / PIN / Deploy')}
 }
+
 async function restoreFromSheet(){
   const u=document.getElementById('sUrl').value.trim()||syncUrl;
+  const pin=document.getElementById('sPin').value.trim()||syncPin;
   if(!u){toast('วาง Web App URL ก่อน');return}
-  if(!confirm('กู้คืนข้อมูลจาก Google Sheets — จะแทนที่ข้อมูลในเครื่องทั้งหมด ยืนยัน?'))return;
+  if(!confirm('กู้คืนข้อมูลจาก Google Sheets — ข้อมูลในเครื่องจะถูกแทนที่ทั้งหมด ยืนยัน?'))return;
   toast('กำลังดึงข้อมูลจากชีต…');
   try{
-    const res=await fetch(u+'?action=load&pin='+encodeURIComponent(document.getElementById('sPin').value.trim()||syncPin));
+    const res=await fetchTimeout(u+'?action=load&pin='+encodeURIComponent(pin),{cache:'no-store'},20000);
     const j=await res.json();
-    if(!j.ok)throw 0;
-    bags=j.data.bags||[];greens=j.data.greens||[];cases=j.data.cases||[];
-    pendingIds.clear();dirty=false;lastFullPush=Date.now();
-    try{localStorage.setItem(KEY,JSON.stringify({bags,greens,cases}))}catch(e){}
-    closeAll();render();toast(`กู้คืนแล้ว: ${bags.length} ถุง + ${greens.length} ตีกลับ + ${cases.length} เคสส่งเวร`);
+    if(!j.ok)throw new Error(j.error||'load failed');
+    bags=j.data.bags||[];
+    greens=j.data.greens||[];
+    cases=j.data.cases||[];
+    pendingIds.clear();
+    dirty=false;
+    serverCursor=Number(j.cursor||0);
+    saveCursor(serverCursor);
+    saveLocalNow();
+    closeAll();
+    render();
+    toast(`กู้คืนแล้ว: ${bags.length} ถุง + ${greens.length} ตีกลับ + ${cases.length} เคสส่งเวร`);
   }catch(e){toast('❌ ดึงข้อมูลไม่สำเร็จ')}
 }
 
@@ -1212,30 +1256,36 @@ $('#filterStatus').addEventListener('change',render);
 $('#filterGreen').addEventListener('change',render);
 $('#filterCase').addEventListener('change',render);
 render();
-if(syncUrl)bootstrapSync()
+setTimeout(()=>{ if(syncUrl) bootstrapSync(); },150);
 
-/* ===== กันปิดแอปก่อนข้อมูลขึ้นชีต ===== */
-// 1) เตือนก่อนปิด/รีเฟรช ถ้ายังมีข้อมูลค้าง
+/* ===== Sync ก่อนออกจากหน้า / กลับเข้าแอป ===== */
 window.addEventListener('beforeunload',e=>{
-  if(dirty&&syncUrl){
+  if(dirty&&syncUrl&&pendingIds.size){
     flushBeacon();
     e.preventDefault();
     e.returnValue='ข้อมูลยังไม่ถูกส่งขึ้น Google Sheets';
     return e.returnValue;
   }
 });
-// 2) สลับแอป/ย่อหน้าจอ (มือถือมักไม่เรียก beforeunload) → ส่งทันที
+
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden){
-    if(dirty&&syncUrl)flushBeacon();
-  }else if(syncUrl && !dirty && pendingIds.size===0 && !syncing && !pulling){
-    pullNow('background');
+    if(syncUrl&&pendingIds.size)flushBeacon();
+  }else if(syncUrl&&!syncing&&!pulling){
+    if(dirty&&pendingIds.size)syncNow('resume');
+    else pullNow('background');
   }
 });
+
 window.addEventListener('pagehide',()=>{
-  clearTimeout(syncTimer); clearTimeout(retryTimer);
-  if(localPersistTimer){clearTimeout(localPersistTimer);localPersistTimer=null;saveLocalNow()}
-  if(dirty&&syncUrl)flushBeacon();
+  clearTimeout(syncTimer);
+  clearTimeout(retryTimer);
+  if(localPersistTimer){
+    clearTimeout(localPersistTimer);
+    localPersistTimer=null;
+    saveLocalNow();
+  }
+  if(syncUrl&&pendingIds.size)flushBeacon();
 });
 </script>
 </body>
