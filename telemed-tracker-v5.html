@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Telemed Tracker — ถุงค้างชำระ & การเงินตีกลับ</title>
+<meta name="app-version" content="v7.1 · 2026-09-16">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@500;600;700&family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -33,6 +34,7 @@ header h1{font-size:1.45rem;font-weight:700;margin-top:2px;display:flex;align-it
 header .sub{font-size:.85rem;opacity:.8;margin-top:2px}
 .sync-pill{font-family:'Sarabun';font-size:.72rem;font-weight:600;border-radius:99px;padding:3px 11px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);cursor:pointer;color:#fff;display:inline-flex;align-items:center;gap:6px}
 .sync-pill .dot{width:8px;height:8px;border-radius:99px;background:#9AA7AD;flex:none}
+.version-badge{display:inline-flex;align-items:center;margin-top:8px;padding:3px 9px;border:1px solid rgba(255,255,255,.25);border-radius:999px;background:rgba(255,255,255,.10);font-size:.72rem;font-weight:600;letter-spacing:.01em;color:rgba(255,255,255,.92)}
 .sync-pill[data-s="ok"] .dot{background:#4ADE80}
 .sync-pill[data-s="syncing"] .dot,.sync-pill[data-s="pending"] .dot{background:#FBBF24;animation:blink 1s infinite}
 .sync-pill[data-s="fail"] .dot{background:#F87171}
@@ -167,6 +169,7 @@ footer .io{display:flex;gap:8px;flex-wrap:wrap}
       <button class="sync-pill" id="syncPill" data-s="off" onclick="openSettings()"><span class="dot"></span><span id="syncLabel">ยังไม่เชื่อม Sheets</span></button>
     </h1>
     <div class="sub">ถุงค้างชำระ (เก็บไม่เกิน 1 เดือน) · เคสการเงินตีกลับ tag เขียว · ใช้ร่วมกันได้หลายเครื่องผ่าน Google Sheets</div>
+    <div class="version-badge" id="appVersionBadge">WebApp v7.1 · อัปเดต 16 ก.ย. 2026</div>
     <div class="stats" id="stats"></div>
   </div>
 </header>
