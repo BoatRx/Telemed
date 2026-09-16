@@ -169,7 +169,7 @@ footer .io{display:flex;gap:8px;flex-wrap:wrap}
       <button class="sync-pill" id="syncPill" data-s="off" onclick="openSettings()"><span class="dot"></span><span id="syncLabel">ยังไม่เชื่อม Sheets</span></button>
     </h1>
     <div class="sub">ถุงค้างชำระ (เก็บไม่เกิน 1 เดือน) · เคสการเงินตีกลับ tag เขียว · ใช้ร่วมกันได้หลายเครื่องผ่าน Google Sheets</div>
-    <div class="version-badge" id="appVersionBadge">WebApp v7.1 · อัปเดต 16 ก.ย. 2026</div>
+    <div class="version-badge" id="appVersionBadge">WebApp v7.2 · อัปเดต 16 ก.ย. 2026</div>
     <div class="stats" id="stats"></div>
   </div>
 </header>
@@ -512,43 +512,94 @@ function fetchTimeout(url,opts,ms){
 }
 function deltaOf(arr){return arr.filter(o=>pendingIds.has(o.id))}
 
-async function syncNow(){
-  if(!syncUrl||syncing)return;
-  syncing=true;setSyncStatus('syncing');
+async function syncNow(reason='manual'){
+  if(!syncUrl||syncing)return false;
+  syncing=true;setSyncStatus('syncing', reason==='background'?'กำลัง sync เบื้องหลัง…':'กำลัง sync…');
   const t0=Date.now();
   try{
     const seqAtSend=dirtySeq;
-    // ส่งเฉพาะเคสที่เปลี่ยน เว้นแต่ยังไม่เคย push เต็มในรอบนี้ (หรือครบ 10 นาที)
     const needFull=!serverOk||!lastFullPush||(Date.now()-lastFullPush>600000);
     const payload={action:'save',pin:syncPin,
       data:needFull?{bags,greens,cases}
                    :{bags:deltaOf(bags),greens:deltaOf(greens),cases:deltaOf(cases)}};
     const sentIds=needFull?null:new Set(pendingIds);
-    const res=await fetchTimeout(syncUrl,{method:'POST',body:JSON.stringify(payload)},30000);
-    const j=await res.json();
-    if(!j.ok){
-      if(String(j.error||'')==='busy'){setSyncStatus('pending');scheduleSync();syncing=false;return}
-      if(String(j.error||'').indexOf('pin')!==-1){setSyncStatus('fail','PIN ไม่ถูกต้อง — แตะเพื่อตั้งค่า');syncing=false;return}
-      throw new Error(j.error||'save failed');
+
+    const res=await fetchTimeout(syncUrl,{
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=UTF-8'},
+      body:JSON.stringify(payload),
+      cache:'no-store'
+    },30000);
+
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text=await res.text();
+    let j;
+    try{j=JSON.parse(text)}catch(e){
+      throw new Error('ตอบกลับจาก Apps Script ไม่ใช่ JSON');
     }
+    if(!j.ok){
+      const serverErr=String(j.error||'server error');
+      if(serverErr==='busy'){
+        setSyncStatus('pending','⏳ Sheets กำลังใช้งาน — จะลองใหม่อัตโนมัติ');
+        syncing=false;
+        clearTimeout(syncTimer);
+        syncTimer=setTimeout(()=>syncNow('retry'),2500);
+        return false;
+      }
+      if(serverErr.toLowerCase().includes('pin')){
+        setSyncStatus('fail','⚠️ PIN ไม่ถูกต้อง — เปิด ⚙️ ตั้งค่า Sheets');
+        return false;
+      }
+      throw new Error(serverErr);
+    }
+
     serverOk=true;
     if(needFull)lastFullPush=Date.now();
-    if(j.data){bags=j.data.bags||bags;greens=j.data.greens||greens;cases=j.data.cases||cases}
-    if(sentIds)sentIds.forEach(id=>pendingIds.delete(id));else pendingIds.clear();
+    if(j.data){
+      bags=j.data.bags||bags;
+      greens=j.data.greens||greens;
+      cases=j.data.cases||cases;
+    }
+    if(sentIds)sentIds.forEach(id=>pendingIds.delete(id));
+    else pendingIds.clear();
+
     try{localStorage.setItem(KEY,JSON.stringify({bags,greens,cases}))}catch(e){}
     render();
     lastSyncMs=Date.now()-t0;
-    if(dirtySeq===seqAtSend){dirty=false;setSyncStatus('ok')}
-    else{setSyncStatus('pending');scheduleSync()}
-    if(lastSyncMs>15000)toast(`⏱ Sync ใช้เวลา ${(lastSyncMs/1000).toFixed(0)} วิ (เซิร์ฟเวอร์ ${j.ms||'?'} ms) — ถ้าช้าบ่อย ตรวจว่า Apps Script เป็นเวอร์ชัน 6 แล้ว`);
+
+    if(dirtySeq===seqAtSend){
+      dirty=false;
+      setSyncStatus('ok');
+    }else{
+      setSyncStatus('pending','⏳ มีการแก้ไขใหม่ — กำลังส่งต่อ');
+      clearTimeout(syncTimer);
+      syncTimer=setTimeout(()=>syncNow('follow-up'),300);
+    }
+
+    if(lastSyncMs>15000){
+      toast(`⏱ Sync ${(lastSyncMs/1000).toFixed(1)} วิ · Server ${j.ms||'?'} ms`);
+    }
     if(Number(j.version||0)<6&&!warnedOldScript){
       warnedOldScript=true;
-      toast('⚠️ สคริปต์บนชีตยังเป็นเวอร์ชันเก่า (ทำให้ sync ช้า) — Deploy → Manage deployments → ✏️ → New version');
+      toast('⚠️ Apps Script ยังเป็นเวอร์ชันเก่า — Deploy เวอร์ชันใหม่ก่อน');
     }
+    return true;
   }catch(e){
-    setSyncStatus('fail',String(e&&e.name)==='AbortError'?'หมดเวลารอ — แตะเพื่อลองใหม่':undefined);
+    const msg=String(e&&e.message||e||'unknown error');
+    let label='⚠️ Sync ไม่สำเร็จ';
+    if(e&&e.name==='AbortError') label='⚠️ Sync timeout — จะลองใหม่';
+    else if(msg.includes('Failed to fetch')) label='⚠️ Network/Apps Script ติดต่อไม่ได้ — จะลองใหม่';
+    else label=`⚠️ Sync ไม่สำเร็จ: ${msg}`;
+
+    setSyncStatus('fail',label);
+    clearTimeout(syncTimer);
+    if(dirty&&syncUrl){
+      syncTimer=setTimeout(()=>syncNow('retry'),5000);
+    }
+    return false;
+  }finally{
+    syncing=false;
   }
-  syncing=false;
 }
 function openSettings(){
   document.getElementById('sUrl').value=syncUrl;
@@ -1137,10 +1188,21 @@ window.addEventListener('beforeunload',e=>{
   }
 });
 // 2) สลับแอป/ย่อหน้าจอ (มือถือมักไม่เรียก beforeunload) → ส่งทันที
+let lastHiddenFlush=0;
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden){
-    if(dirty&&syncUrl){clearTimeout(syncTimer);if(!flushBeacon())syncNow()}
-  }else if(syncUrl){syncNow()}
+    if(dirty&&syncUrl){
+      const now=Date.now();
+      if(now-lastHiddenFlush>1500){
+        lastHiddenFlush=now;
+        clearTimeout(syncTimer);
+        if(!flushBeacon()) syncNow('visibility');
+      }
+    }
+  }else if(syncUrl){
+    clearTimeout(syncTimer);
+    syncNow('background');
+  }
 });
 window.addEventListener('pagehide',()=>{
   if(localPersistTimer){clearTimeout(localPersistTimer);localPersistTimer=null;saveLocalNow()}
