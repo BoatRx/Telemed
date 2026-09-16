@@ -439,11 +439,27 @@ function loadData(){
   }catch(e){}}
   return memStore||{bags:[],greens:[],cases:[]};
 }
-function persist(){
+let localPersistTimer=null;
+function saveLocalNow(){
   const data={bags,greens,cases};
   try{localStorage.setItem(KEY,JSON.stringify(data))}
   catch(e){memStore=data;toast('⚠️ บันทึกลงเครื่องไม่ได้ — อย่าลืมสำรอง JSON ก่อนปิดหน้า')}
+}
+function queueLocalPersist(delay=180){
+  clearTimeout(localPersistTimer);
+  localPersistTimer=setTimeout(()=>{
+    localPersistTimer=null;
+    saveLocalNow();
+  },delay);
+}
+function persist(){
+  saveLocalNow();
   markDirty();
+  scheduleSync();
+}
+function persistDeferred(delay=180){
+  markDirty();
+  queueLocalPersist(delay);
   scheduleSync();
 }
 let {bags,greens,cases}=loadData();
@@ -1014,22 +1030,33 @@ function openDissolve(id){
   if(b.status!=='dissolving'){
     const confirmed=(b.calls||[]).some(c=>c.result!=='noreach');
     if(!confirmed&&!confirm('ยังไม่มีบันทึกว่าโทร confirm ผู้ป่วยได้เลย\nต้องการเริ่มสลายถุงจริงหรือไม่?'))return;
-    b.status='dissolving';b.disDone=b.disDone||[];touch(b);persist();
+    b.status='dissolving';
+    b.disDone=b.disDone||[];
+    touch(b);
+    // ไม่ stringify database และไม่ render ทั้งหน้าในจังหวะเปิด modal
+    persistDeferred();
   }
+
   $('#disWho').textContent=`${b.queue||''} · HN ${b.hn||''}`;
   $('#disSteps').innerHTML=DIS_STEPS.map((s,i)=>`
     <label class="check-row ${b.disDone.includes(i)?'done':''}">
       <input type="checkbox" ${b.disDone.includes(i)?'checked':''} onchange="toggleStep(${i},this.checked)">
       <span class="t"><b>${i+1}. ${s[0]}</b>${s[1]?`<span>${s[1]}</span>`:''}</span>
     </label>`).join('');
-  $('#disOverlay').classList.add('open');render();
+  $('#disOverlay').classList.add('open');
 }
 function toggleStep(i,on){
   const b=bags.find(x=>x.id===disId);if(!b)return;
   b.disDone=b.disDone||[];
   if(on&&!b.disDone.includes(i))b.disDone.push(i);
   if(!on)b.disDone=b.disDone.filter(x=>x!==i);
-  touch(b);persist();openDissolve(disId);
+  touch(b);
+
+  // เปลี่ยนเฉพาะ row ที่กด ไม่สร้าง modal ใหม่และไม่ render ทั้งรายการ
+  const row=document.querySelector(`#disSteps .check-row:nth-child(${i+1})`);
+  if(row)row.classList.toggle('done',on);
+
+  persistDeferred();
 }
 function finishDissolve(){
   const b=bags.find(x=>x.id===disId);if(!b)return;
@@ -1112,7 +1139,10 @@ document.addEventListener('visibilitychange',()=>{
     if(dirty&&syncUrl){clearTimeout(syncTimer);if(!flushBeacon())syncNow()}
   }else if(syncUrl){syncNow()}
 });
-window.addEventListener('pagehide',()=>{if(dirty&&syncUrl)flushBeacon()});
+window.addEventListener('pagehide',()=>{
+  if(localPersistTimer){clearTimeout(localPersistTimer);localPersistTimer=null;saveLocalNow()}
+  if(dirty&&syncUrl)flushBeacon();
+});
 </script>
 </body>
 </html>
