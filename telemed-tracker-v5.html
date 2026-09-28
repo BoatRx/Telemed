@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Telemed Tracker — ถุงค้างชำระ & การเงินตีกลับ</title>
-<meta name="app-version" content="v10.0 · 2026-09-16">
+<meta name="app-version" content="v10.1 · 2026-09-28">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@500;600;700&family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -169,7 +169,7 @@ footer .io{display:flex;gap:8px;flex-wrap:wrap}
       <button class="sync-pill" id="syncPill" data-s="off" onclick="openSettings()"><span class="dot"></span><span id="syncLabel">ยังไม่เชื่อม Sheets</span></button>
     </h1>
     <div class="sub">ถุงค้างชำระ (เก็บไม่เกิน 1 เดือน) · เคสการเงินตีกลับ tag เขียว · ใช้ร่วมกันได้หลายเครื่องผ่าน Google Sheets</div>
-    <div class="version-badge" id="appVersionBadge">WebApp v10.0 · อัปเดต 16 ก.ย. 2026</div>
+    <div class="version-badge" id="appVersionBadge">WebApp v10.1 · อัปเดต 28 ก.ย. 2026</div>
     <div class="stats" id="stats"></div>
   </div>
 </header>
@@ -821,11 +821,12 @@ function bagCard(b){
   const calls=callsHTML(b);
   const actions=b.status==='closed'
     ?`<button class="btn btn-ghost btn-sm" onclick="reopen('${b.id}')">เปิดเคสใหม่</button>
-      <button class="btn btn-ghost btn-sm danger-text" onclick="removeBag('${b.id}')">ลบ</button>`
+      <button class="btn btn-ghost btn-sm danger-text" onclick="removeBag('${b.id}')">🗑 ลบถุง</button>`
     :`<button class="btn btn-ghost btn-sm" onclick="openCall('${b.id}')">📞 บันทึกการโทร</button>
       <button class="btn btn-ghost btn-sm" onclick="closePaid('${b.id}')">✅ ชำระ/รับแล้ว</button>
       <button class="btn btn-ghost btn-sm danger-text" onclick="openDissolve('${b.id}')">🗑 สลายถุง${b.status==='dissolving'?' (ค้างอยู่)':''}</button>
-      <button class="btn btn-ghost btn-sm" onclick="openForm('${b.id}')">แก้ไข</button>`;
+      <button class="btn btn-ghost btn-sm" onclick="openForm('${b.id}')">แก้ไข</button>
+      <button class="btn btn-ghost btn-sm danger-text" onclick="removeBag('${b.id}')">🗑 ลบถุง</button>`;
   return `<div class="bag ${b.status==='closed'?'closed':''}" data-type="${b.type}">
     <div class="strip"></div>
     <div class="bag-body">
@@ -1205,7 +1206,7 @@ function closePaid(id){const b=bags.find(x=>x.id===id);if(!b)return;
   if(!confirm('ยืนยันปิดเคส: ผู้ป่วยชำระ/มารับยาแล้ว?'))return;
   b.status='closed';b.closeReason='ชำระ/รับยาแล้ว · '+todayISO();touch(b);persist();render();toast('ปิดเคสแล้ว')}
 function reopen(id){const b=bags.find(x=>x.id===id);if(!b)return;b.status='waiting';b.closeReason='';touch(b);persist();render()}
-function removeBag(id){const b=bags.find(x=>x.id===id);if(!b||!confirm('ลบเคสนี้ถาวร? (ลบจากทุกเครื่อง)'))return;b.deleted=true;touch(b);persist();render();toast('ลบแล้ว')}
+function removeBag(id){const b=bags.find(x=>x.id===id);if(!b)return;if(!confirm('ลบถุงนี้ออกจากระบบ?\nเหมาะสำหรับกรณีรับถุงซ้ำหรือบันทึกผิด\nถุงนี้จะหายจากทุกเครื่องหลัง Sync'))return;b.deleted=true;touch(b);persist();render();toast('ลบถุงแล้ว — กำลัง Sync ไปยังทุกเครื่อง')}
 function closeAll(){document.querySelectorAll('.overlay').forEach(o=>o.classList.remove('open'))}
 document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)closeAll()}));
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeAll()});
