@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Telemed Tracker — ถุงค้างชำระ & การเงินตีกลับ</title>
-<meta name="app-version" content="v10.1 · 2026-09-28">
+<meta name="app-version" content="v10.2 · 2026-11-05">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@500;600;700&family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -75,6 +75,7 @@ main{max-width:960px;margin:14px auto;padding:0 18px;display:grid;gap:12px}
 .bag[data-type="cold"] .strip{background:var(--cold)}
 .bag[data-type="normal"] .strip{background:var(--f1)}
 .bag[data-type="special"] .strip{background:var(--purple)}
+.bag[data-type="mixed"] .strip{background:var(--purple)}
 .bag[data-type="green"] .strip{background:repeating-linear-gradient(45deg,var(--cold),var(--cold) 8px,#7BC9A6 8px,#7BC9A6 16px)}
 .bag[data-type="case"] .strip{background:var(--warn)}
 .chip.case{background:var(--warn-soft);color:var(--warn)}
@@ -88,7 +89,7 @@ main{max-width:960px;margin:14px auto;padding:0 18px;display:grid;gap:12px}
 .chip{font-size:.74rem;font-weight:600;border-radius:99px;padding:2.5px 10px;background:#EEF2F4;color:var(--muted)}
 .chip.cold,.chip.green{background:var(--cold-soft);color:var(--cold)}
 .chip.normal{background:var(--f1-soft);color:var(--f1)}
-.chip.special{background:var(--purple-soft);color:var(--purple)}
+.chip.special,.chip.mixed{background:var(--purple-soft);color:var(--purple)}
 .chip.warn{background:var(--warn-soft);color:var(--warn)}
 .chip.danger{background:var(--danger-soft);color:var(--danger)}
 .chip.ok{background:var(--cold-soft);color:var(--ok)}
@@ -135,7 +136,7 @@ main{max-width:960px;margin:14px auto;padding:0 18px;display:grid;gap:12px}
 .seg button{flex:1;padding:9px 4px;font-size:.86rem;font-weight:600;color:var(--muted);background:#fff}
 .seg button.on[data-v="cold"]{background:var(--cold-soft);color:var(--cold)}
 .seg button.on[data-v="normal"]{background:var(--f1-soft);color:var(--f1)}
-.seg button.on[data-v="special"]{background:var(--purple-soft);color:var(--purple)}
+.seg button.on[data-v="special"],.seg button.on[data-v="mixed"]{background:var(--purple-soft);color:var(--purple)}
 .seg button.on[data-v="am"],.seg button.on[data-v="pm"]{background:var(--ink);color:#fff}
 .check-row{display:flex;align-items:flex-start;gap:10px;padding:9px 11px;border:1.5px solid var(--line);border-radius:10px;margin-bottom:8px;cursor:pointer}
 .check-row input{width:18px;height:18px;margin-top:3px;flex:none;accent-color:var(--ok)}
@@ -169,7 +170,7 @@ footer .io{display:flex;gap:8px;flex-wrap:wrap}
       <button class="sync-pill" id="syncPill" data-s="off" onclick="openSettings()"><span class="dot"></span><span id="syncLabel">ยังไม่เชื่อม Sheets</span></button>
     </h1>
     <div class="sub">ถุงค้างชำระ (เก็บไม่เกิน 1 เดือน) · เคสการเงินตีกลับ tag เขียว · ใช้ร่วมกันได้หลายเครื่องผ่าน Google Sheets</div>
-    <div class="version-badge" id="appVersionBadge">WebApp v10.1 · อัปเดต 28 ก.ย. 2026</div>
+    <div class="version-badge" id="appVersionBadge">WebApp v10.2 · อัปเดต 5 พ.ย. 2026</div>
     <div class="stats" id="stats"></div>
   </div>
 </header>
@@ -240,9 +241,9 @@ footer .io{display:flex;gap:8px;flex-wrap:wrap}
     <div class="field">
       <label>ประเภทถุง (ตามอัตราเรียกเก็บ)</label>
       <div class="seg" id="fType">
-        <button data-v="normal">ยาปกติ · 100</button>
+        <button data-v="normal">ยาปกติ · 150</button>
         <button data-v="cold">ยาแช่เย็น · 200</button>
-        <button data-v="special">ยาพิเศษแช่เย็น · 300</button>
+        <button data-v="mixed">มีทั้งยาปกติ + ยาแช่เย็น · 350</button>
       </div>
     </div>
     <div class="field">
@@ -326,6 +327,7 @@ footer .io{display:flex;gap:8px;flex-wrap:wrap}
       <div class="field"><label>วันที่</label><input type="date" id="fcDate"></div>
       <div class="field"><label>HN</label><input id="fcHN"></div>
     </div>
+    <div class="field"><label>ชื่อผู้ป่วย</label><input id="fcName" placeholder="ชื่อ-นามสกุลผู้ป่วย (ไม่บังคับ)"></div>
     <div class="grid2">
       <div class="field"><label>เลขใบนำทาง</label><input id="fcTracking" inputmode="numeric"></div>
       <div class="field"><label>คิว</label><input id="fcQueue" placeholder="เช่น 7009 หรือ K7034"></div>
@@ -727,8 +729,8 @@ async function restoreFromSheet(){
 }
 
 /* ================= constants ================= */
-const TYPE_LABEL={normal:'ยาปกติ',cold:'ยาแช่เย็น',special:'ยาพิเศษแช่เย็น'};
-const TYPE_FEE={normal:100,cold:200,special:300};
+const TYPE_LABEL={normal:'ยาปกติ',cold:'ยาแช่เย็น',mixed:'มีทั้งยาปกติ + ยาแช่เย็น',special:'ยาพิเศษแช่เย็น (ข้อมูลเดิม)'};
+const TYPE_FEE={normal:150,cold:200,mixed:350,special:300};
 const LIMIT_DAYS=30;
 const DIS_STEPS=[
  ['Telemed ถอนค่าส่ง ปณ.','',0],
@@ -902,7 +904,7 @@ function caseCard(c){
       <div class="bag-top">
         <div style="display:flex;gap:10px;align-items:flex-start">
           <input type="checkbox" class="done-toggle" ${c.done?'checked':''} onchange="toggleCaseDone('${c.id}',this.checked)" title="ติ๊กเมื่อเคสจบ">
-          <div class="bag-id">HN ${esc(c.hn)||'—'}<small>${c.queue?'คิว '+esc(c.queue):''}${c.tracking?' · ใบนำทาง '+esc(c.tracking):''}</small></div>
+          <div class="bag-id">HN ${esc(c.hn)||'—'}${c.name?`<small> · ${esc(c.name)}</small>`:''}<small>${c.queue?'คิว '+esc(c.queue):''}${c.tracking?' · ใบนำทาง '+esc(c.tracking):''}</small></div>
         </div>
         <div style="font-size:.8rem;color:var(--muted)">${c.date||''}</div>
       </div>
@@ -1099,7 +1101,7 @@ function openCaseForm(id){
   const c=id?cases.find(x=>x.id===id):null;
   $('#cFormTitle').textContent=c?'แก้ไขเคสส่งเวร':'บันทึกเคสส่งเวร';
   $('#fcDate').value=c?c.date||todayISO():todayISO();
-  $('#fcHN').value=c?c.hn||'':'';$('#fcTracking').value=c?c.tracking||'':'';
+  $('#fcHN').value=c?c.hn||'':'';$('#fcName').value=c?c.name||'':'';$('#fcTracking').value=c?c.tracking||'':'';
   $('#fcQueue').value=c?c.queue||'':'';$('#fcNotes').value=c?c.notes||'':'';
   $('#fcRegis').value=c?c.regis||'':'';$('#fcRights').value=c?c.rights||'':'';
   $('#fcPostal').value=c?c.postal||'':'';$('#fcPopup').value=c?c.popup||'':'';
@@ -1109,7 +1111,7 @@ function openCaseForm(id){
 function saveCaseForm(){
   const hn=$('#fcHN').value.trim(),notes=$('#fcNotes').value.trim();
   if(!hn&&!notes){toast('กรอก HN หรือบันทึกเหตุการณ์อย่างน้อยหนึ่งอย่าง');return}
-  const data={date:$('#fcDate').value||todayISO(),hn,tracking:$('#fcTracking').value.trim(),
+  const data={date:$('#fcDate').value||todayISO(),hn,name:$('#fcName').value.trim(),tracking:$('#fcTracking').value.trim(),
     queue:$('#fcQueue').value.trim(),notes,regis:$('#fcRegis').value.trim(),
     rights:$('#fcRights').value.trim(),postal:$('#fcPostal').value.trim(),
     popup:$('#fcPopup').value.trim(),status:$('#fcStatus').value.trim()};
@@ -1244,8 +1246,8 @@ function exportCSV(){
       return [g.queue,g.hn,g.name||'',g.date,g.rxDate||'',SESSION_LABEL[g.session]||'',g.reason,(g.meds||'').replace(/\n/g,' | '),`${(g.steps||[]).length}/${GREEN_STEPS.length}`,st.label,lc?lc.date:'',(g.notes||'').replace(/\n/g,' ')]});
     name=`telemed-green-cases-${todayISO()}.csv`;
   }else{
-    head=['วันที่','HN','เลขใบนำทาง','คิว','บันทึก','ลงทะเบียนใหม่','เปิดสิทธิ์','ห้องยาปณ.','pop-up','Status','เสร็จ'];
-    rows=liveC().map(c=>[c.date,c.hn,c.tracking||'',c.queue||'',(c.notes||'').replace(/\n/g,' '),c.regis||'',c.rights||'',c.postal||'',c.popup||'',c.status||'',c.done?'✓':'']);
+    head=['วันที่','HN','ชื่อผู้ป่วย','เลขใบนำทาง','คิว','บันทึก','ลงทะเบียนใหม่','เปิดสิทธิ์','ห้องยาปณ.','pop-up','Status','เสร็จ'];
+    rows=liveC().map(c=>[c.date,c.hn,c.name||'',c.tracking||'',c.queue||'',(c.notes||'').replace(/\n/g,' '),c.regis||'',c.rights||'',c.postal||'',c.popup||'',c.status||'',c.done?'✓':'']);
     name=`telemed-handoff-cases-${todayISO()}.csv`;
   }
   const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(','));
